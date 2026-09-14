@@ -3,11 +3,11 @@ import Foundation
 
 // audio-input-priority — keep macOS default input device on the best available microphone.
 //
-// Priority list: ~/.config/audio-input-priority/devices (one device name per line, top = best).
-// Falls back to the built-in list below when the file is missing.
+// Priority list: ~/.config/audio-input-priority/devices (one device name or glob per line, top = best).
+// Globs: * and ? (case-insensitive), e.g. "*Pods*" matches any AirPods. Falls back to the list below.
 // Usage: audio-input-priority [--list | --once]
 
-let defaultPriority = ["fifine Microphone", "MX Brio", "MacBook Pro Microphone"]
+let defaultPriority = ["*Pods*", "fifine Microphone", "MX Brio", "MacBook Pro Microphone"]
 let configPath = FileManager.default.homeDirectoryForCurrentUser
     .appendingPathComponent(".config/audio-input-priority/devices").path
 
@@ -42,10 +42,13 @@ func priority() -> [String] {
 func log(_ s: String) {
     print("\(ISO8601DateFormatter().string(from: Date())) \(s)"); fflush(stdout)
 }
+func matches(_ pattern: String, _ text: String) -> Bool {
+    NSPredicate(format: "SELF LIKE[c] %@", pattern).evaluate(with: text)
+}
 func apply() {
-    let inputs = devices().filter(hasInput)
-    let byName = Dictionary(inputs.map { (name($0), $0) }, uniquingKeysWith: { a, _ in a })
-    guard let want = priority().compactMap({ byName[$0] }).first else { log("no priority device present"); return }
+    let inputs = devices().filter(hasInput).map { (id: $0, name: name($0)) }
+    guard let want = priority().lazy.compactMap({ p in inputs.first { matches(p, $0.name) }?.id }).first
+    else { log("no priority device present"); return }
     let cur = currentDefault()
     if cur == want { return }
     var a = addr(kAudioHardwarePropertyDefaultInputDevice); var id = want

@@ -27,9 +27,11 @@ make install
 
 ## Configure priority
 
-Edit `~/.config/audio-input-priority/devices` — one CoreAudio device name per line, best first:
+Edit `~/.config/audio-input-priority/devices` — one CoreAudio device name per line, best first.
+Globs `*` and `?` are allowed (case-insensitive), handy for several AirPods with different names:
 
 ```
+*Pods*
 fifine Microphone
 MX Brio
 MacBook Pro Microphone

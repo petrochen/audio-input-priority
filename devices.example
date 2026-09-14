@@ -1,5 +1,7 @@
 # ~/.config/audio-input-priority/devices
-# One CoreAudio input device name per line, best first. Get names with: audio-input-priority --list
+# One CoreAudio input device name per line, best first. Globs * and ? allowed (case-insensitive).
+# Get exact names with: audio-input-priority --list
+*Pods*
 fifine Microphone
 MX Brio
 MacBook Pro Microphone
