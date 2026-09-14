@@ -10,7 +10,7 @@ import IOKit
 // The built-in microphone is skipped while the lid is closed (clamshell mode): it is muffled there.
 // Usage: audio-input-priority [--list | --once]
 
-let defaultPriority = ["*Pods*", "fifine Microphone", "MX Brio", "MacBook Pro Microphone"]
+let defaultPriority = ["fifine Microphone", "MX Brio", "MacBook Pro Microphone", "*Pods*"]
 let configPath = FileManager.default.homeDirectoryForCurrentUser
     .appendingPathComponent(".config/audio-input-priority/devices").path
 

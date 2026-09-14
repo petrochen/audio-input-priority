@@ -31,11 +31,15 @@ Edit `~/.config/audio-input-priority/devices` — one CoreAudio device name per 
 Globs `*` and `?` are allowed (case-insensitive), handy for several AirPods with different names:
 
 ```
-*Pods*
 fifine Microphone
 MX Brio
 MacBook Pro Microphone
+*Pods*
 ```
+
+Rationale: any USB / built‑in microphone at 48 kHz beats a Bluetooth headset, whose mic runs over
+HFP at 16 kHz mono. AirPods therefore come last — they win only on the go, when nothing else is
+plugged in and the lid is closed.
 
 Get exact device names (the `*` marks the current default):
 

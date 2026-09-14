@@ -1,7 +1,8 @@
 # ~/.config/audio-input-priority/devices
 # One CoreAudio input device name per line, best first. Globs * and ? allowed (case-insensitive).
 # Get exact names with: audio-input-priority --list
-*Pods*
+# Built-in mic is skipped automatically while the lid is closed.
 fifine Microphone
 MX Brio
 MacBook Pro Microphone
+*Pods*
