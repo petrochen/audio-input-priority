@@ -1,10 +1,13 @@
 import CoreAudio
+import CoreGraphics
 import Foundation
+import IOKit
 
 // audio-input-priority — keep macOS default input device on the best available microphone.
 //
 // Priority list: ~/.config/audio-input-priority/devices (one device name or glob per line, top = best).
 // Globs: * and ? (case-insensitive), e.g. "*Pods*" matches any AirPods. Falls back to the list below.
+// The built-in microphone is skipped while the lid is closed (clamshell mode): it is muffled there.
 // Usage: audio-input-priority [--list | --once]
 
 let defaultPriority = ["*Pods*", "fifine Microphone", "MX Brio", "MacBook Pro Microphone"]
@@ -33,6 +36,21 @@ func currentDefault() -> AudioObjectID {
     var a = addr(kAudioHardwarePropertyDefaultInputDevice); var id: AudioObjectID = 0; var sz = UInt32(4)
     AudioObjectGetPropertyData(sys, &a, 0, nil, &sz, &id); return id
 }
+func isBuiltIn(_ id: AudioObjectID) -> Bool {
+    var a = addr(kAudioDevicePropertyTransportType); var t: UInt32 = 0; var sz = UInt32(4)
+    AudioObjectGetPropertyData(id, &a, 0, nil, &sz, &t); return t == kAudioDeviceTransportTypeBuiltIn
+}
+func lidClosed() -> Bool {
+    let entry = IORegistryEntryFromPath(kIOMainPortDefault, "IOService:/IOResources/AppleClamshellState")
+    var svc = entry
+    if svc == 0 {
+        svc = IOServiceGetMatchingService(kIOMainPortDefault, IOServiceMatching("IOPMrootDomain"))
+    }
+    guard svc != 0 else { return false }
+    defer { IOObjectRelease(svc) }
+    let v = IORegistryEntryCreateCFProperty(svc, "AppleClamshellState" as CFString, kCFAllocatorDefault, 0)?.takeRetainedValue()
+    return (v as? Bool) ?? false
+}
 func priority() -> [String] {
     guard let text = try? String(contentsOfFile: configPath, encoding: .utf8) else { return defaultPriority }
     let lines = text.split(separator: "\n").map { $0.trimmingCharacters(in: .whitespaces) }
@@ -46,35 +64,42 @@ func matches(_ pattern: String, _ text: String) -> Bool {
     NSPredicate(format: "SELF LIKE[c] %@", pattern).evaluate(with: text)
 }
 func apply() {
-    let inputs = devices().filter(hasInput).map { (id: $0, name: name($0)) }
+    let closed = lidClosed()
+    let inputs = devices().filter { hasInput($0) && !(closed && isBuiltIn($0)) }.map { (id: $0, name: name($0)) }
     guard let want = priority().lazy.compactMap({ p in inputs.first { matches(p, $0.name) }?.id }).first
     else { log("no priority device present"); return }
     let cur = currentDefault()
     if cur == want { return }
     var a = addr(kAudioHardwarePropertyDefaultInputDevice); var id = want
     let st = AudioObjectSetPropertyData(sys, &a, 0, nil, UInt32(4), &id)
-    log("default input: \(name(cur)) -> \(name(want)) (status \(st))")
+    log("default input: \(name(cur)) -> \(name(want)) (status \(st), lid \(closed ? "closed" : "open"))")
 }
 
 let args = CommandLine.arguments.dropFirst()
 if args.contains("--list") {
-    let cur = currentDefault()
-    for d in devices().filter(hasInput) { print("\(d == cur ? "* " : "  ")\(name(d))") }
+    let cur = currentDefault(); let closed = lidClosed()
+    for d in devices().filter(hasInput) {
+        let skip = closed && isBuiltIn(d) ? "  (skipped: lid closed)" : ""
+        print("\(d == cur ? "* " : "  ")\(name(d))\(skip)")
+    }
     exit(0)
 }
 if args.contains("--once") { apply(); exit(0) }
 
 let queue = DispatchQueue(label: "audio-input-priority")
 var pending: DispatchWorkItem?
-let listener: AudioObjectPropertyListenerBlock = { _, _ in
+func schedule() {
     pending?.cancel()
     let w = DispatchWorkItem { apply() }; pending = w
     queue.asyncAfter(deadline: .now() + 1.5, execute: w)   // debounce: devices settle after plug events
 }
+let listener: AudioObjectPropertyListenerBlock = { _, _ in schedule() }
 var a1 = addr(kAudioHardwarePropertyDevices)
 var a2 = addr(kAudioHardwarePropertyDefaultInputDevice)
 AudioObjectAddPropertyListenerBlock(sys, &a1, queue, listener)
 AudioObjectAddPropertyListenerBlock(sys, &a2, queue, listener)
+// Lid open/close changes the display configuration; use that as the trigger to re-evaluate.
+CGDisplayRegisterReconfigurationCallback({ _, _, _ in queue.async { schedule() } }, nil)
 log("started, priority: \(priority().joined(separator: " > ")) (config: \(configPath))")
 queue.async { apply() }
 RunLoop.main.run()

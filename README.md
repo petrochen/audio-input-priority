@@ -46,6 +46,10 @@ audio-input-priority --list
 The config is re‑read on every event, so changes apply without restarting.
 Devices not in the list (e.g. Bluetooth headsets, iPhone Continuity mic) are never chosen.
 
+**Lid detection:** the built‑in microphone is skipped while the MacBook lid is closed (clamshell
+mode with an external display) — macOS keeps it in the device list, but it sounds muffled there.
+Opening or closing the lid re‑evaluates the priority immediately. `--list` shows the skip.
+
 > Note: because the agent enforces the list, picking a different microphone in
 > **System Settings → Sound → Input** will be reverted. Per‑app selection inside Zoom / Meet /
 > OBS is a separate setting and is not affected.
