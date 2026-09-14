@@ -1,0 +1,6 @@
+# ~/.config/audio-input-priority/outputs
+# Default OUTPUT priority, best first. Globs allowed. Built-in speakers are skipped while the lid is closed.
+*Pods*
+WH-1000XM3
+LG UltraFine Display Audio
+MacBook Pro Speakers

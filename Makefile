@@ -13,6 +13,7 @@ install: build
 	mkdir -p $(HOME)/bin $(HOME)/Library/LaunchAgents $(dir $(CONFIG))
 	cp audio-input-priority $(BIN)
 	test -f $(CONFIG) || cp devices.example $(CONFIG)
+	test -f $(dir $(CONFIG))outputs || cp outputs.example $(dir $(CONFIG))outputs
 	sed 's|__HOME__|$(HOME)|g' $(LABEL).plist > $(PLIST)
 	-launchctl bootout $(DOMAIN)/$(LABEL) 2>/dev/null; sleep 1
 	launchctl bootstrap $(DOMAIN) $(PLIST)

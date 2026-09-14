@@ -1,13 +1,14 @@
 # audio-input-priority
 
-Tiny macOS background agent that keeps the **default input device** (microphone) on the best
-available one from your priority list. Plug a USB mic in → it becomes the default. Unplug it →
-the next one in the list takes over.
+Tiny macOS background agent that keeps the **default input and output devices** on the best
+available ones from your priority lists. Plug a USB mic in → it becomes the default. Unplug it →
+the next one in the list takes over. Same for output (headphones → external display → speakers).
 
-It also fixes the classic Bluetooth headphones problem: after a call macOS leaves the headset as
-the input device, so it stays stuck in the low‑quality HFP profile (16 kHz mono) instead of A2DP.
-Because Bluetooth headsets are not in the priority list, the agent moves input back to a real
-microphone within ~1.5 s and the headphones return to stereo.
+It also fixes the classic Bluetooth headphones problem: after a call macOS may leave the headset
+in the low‑quality HFP profile (16 kHz mono) instead of A2DP. The agent moves input back to a
+real microphone within ~1.5 s, and if the headset is still at 16 kHz while nobody records, bumps
+its sample rate back up (checked every 10 s only while stuck). A macOS notification is shown on
+every switch.
 
 - Swift, single file, ~100 lines, no dependencies beyond CoreAudio / Foundation
 - Event‑driven (CoreAudio property listeners), no polling, ~14 MB RSS, 0 % CPU when idle
@@ -22,7 +23,7 @@ make install
 ```
 
 `make install` builds the binary to `~/bin/audio-input-priority`, writes the LaunchAgent to
-`~/Library/LaunchAgents/com.apetrochenko.audio-input-priority.plist`, creates the config file
+`~/Library/LaunchAgents/com.apetrochenko.audio-input-priority.plist`, creates the config files
 (if missing) and starts the agent. It starts automatically at every login.
 
 ## Configure priority
@@ -57,6 +58,28 @@ Opening or closing the lid re‑evaluates the priority immediately. `--list` sho
 > Note: because the agent enforces the list, picking a different microphone in
 > **System Settings → Sound → Input** will be reverted. Per‑app selection inside Zoom / Meet /
 > OBS is a separate setting and is not affected.
+
+## Configure output priority
+
+Same format in `~/.config/audio-input-priority/outputs`:
+
+```
+*Pods*
+WH-1000XM3
+LG UltraFine Display Audio
+MacBook Pro Speakers
+```
+
+Built‑in speakers are skipped while the lid is closed, so with an external display the display's
+audio wins over the (inaudible) MacBook speakers. Both "default output" and "system output"
+(alert sounds) are set together.
+
+## Notifications
+
+Every switch posts a macOS notification ("Microphone: MX Brio", "Sound output: …",
+"Headphones: … back to stereo"). They are sent through `osascript`, so they appear under
+**Script Editor** in System Settings → Notifications; disable them there, or start the agent
+with `--quiet` (edit `ProgramArguments` in the plist).
 
 ## Turn it off / on
 
@@ -97,7 +120,8 @@ system_profiler SPAudioDataType | grep -A7 "WH-1000XM3:" | grep -E "Channels|Sam
 ```
 
 `Current SampleRate: 16000` with `Output Channels: 1` = HFP (call mode).
-`44100` / `48000` with `2` channels = A2DP (music mode).
+`44100` / `48000` with `2` channels = A2DP (music mode). `audio-input-priority --list` shows the
+current rate next to every Bluetooth device.
 
 ## License
 
