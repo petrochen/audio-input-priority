@@ -1,3 +1,2 @@
 audio-input-priority
-*.o
-.DS_Store
+*.app

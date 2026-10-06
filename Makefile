@@ -1,17 +1,25 @@
 LABEL   = com.apetrochenko.audio-input-priority
+APP     = $(HOME)/Applications/AudioPriority.app
+EXE     = $(APP)/Contents/MacOS/audio-input-priority
 BIN     = $(HOME)/bin/audio-input-priority
 PLIST   = $(HOME)/Library/LaunchAgents/$(LABEL).plist
 CONFIG  = $(HOME)/.config/audio-input-priority/devices
 DOMAIN  = gui/$(shell id -u)
 
-.PHONY: build install uninstall start stop restart status log list
+.PHONY: build app install uninstall start stop restart status log list
 
 build:
 	swiftc -O -o audio-input-priority audio-input-priority.swift
 
-install: build
+app: build
+	mkdir -p "$(APP)/Contents/MacOS"
+	cp audio-input-priority "$(EXE)"
+	cp Info.plist "$(APP)/Contents/Info.plist"
+	codesign -f -s - "$(APP)" 2>/dev/null
+
+install: app
 	mkdir -p $(HOME)/bin $(HOME)/Library/LaunchAgents $(dir $(CONFIG))
-	cp audio-input-priority $(BIN)
+	ln -sf "$(EXE)" $(BIN)
 	test -f $(CONFIG) || cp devices.example $(CONFIG)
 	test -f $(dir $(CONFIG))outputs || cp outputs.example $(dir $(CONFIG))outputs
 	sed 's|__HOME__|$(HOME)|g' $(LABEL).plist > $(PLIST)
@@ -19,7 +27,7 @@ install: build
 	launchctl bootstrap $(DOMAIN) $(PLIST)
 
 uninstall: stop
-	rm -f $(BIN) $(PLIST)
+	rm -rf "$(APP)" $(BIN) $(PLIST)
 
 start:
 	launchctl bootstrap $(DOMAIN) $(PLIST)

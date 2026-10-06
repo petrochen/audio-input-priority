@@ -10,7 +10,8 @@ real microphone within ~1.5 s, and if the headset is still at 16 kHz while nobod
 its sample rate back up (checked every 10 s only while stuck). A macOS notification is shown on
 every switch.
 
-- Swift, single file, ~100 lines, no dependencies beyond CoreAudio / Foundation
+- Menu bar icon: pick the microphone / output by hand, pause the automation, open the config and log
+- Swift, single file, no dependencies beyond CoreAudio / AppKit / Foundation
 - Event‑driven (CoreAudio property listeners), no polling, ~14 MB RSS, 0 % CPU when idle
 - No permissions or TCC prompts: it never reads audio, it only changes the "default input" setting
 
@@ -22,9 +23,22 @@ cd audio-input-priority
 make install
 ```
 
-`make install` builds the binary to `~/bin/audio-input-priority`, writes the LaunchAgent to
-`~/Library/LaunchAgents/com.apetrochenko.audio-input-priority.plist`, creates the config files
-(if missing) and starts the agent. It starts automatically at every login.
+`make install` builds `~/Applications/AudioPriority.app` (menu bar only, no Dock icon), symlinks the
+CLI to `~/bin/audio-input-priority`, writes the LaunchAgent to `~/Library/LaunchAgents/` and starts it.
+The agent starts at login and restarts if it ever crashes. The log is at
+`~/Library/Logs/audio-input-priority.log`.
+
+## Menu bar
+
+The microphone icon in the menu bar opens a menu with every input and output device, a checkmark on
+the current one. Click a device to select it by hand: the agent keeps that choice (whatever the
+device) until something is plugged in / unplugged or the lid opens / closes.
+
+- **Automatic priority** (checkbox): untick to switch the automation off entirely; the icon turns to
+  an outline. Tick it again to re-apply the lists. The setting survives restarts.
+- **Apply priority now**: forget manual choices and re-run the lists.
+- **Edit priority lists…** opens the two config files, **Show log** opens the log, **Sound settings…**
+  jumps to System Settings → Sound.
 
 ## Configure priority
 
