@@ -164,6 +164,36 @@ Untick **Start at login**, quit, delete `AudioPriority.app`. Settings live in
 `~/.config/audio-input-priority/` and in the `com.apetrochenko.audio-input-priority` defaults domain.
 From a source checkout, `make uninstall` does all of it.
 
+## Development
+
+Everything is in `audio-input-priority.swift` (CoreAudio rules, menu bar, Priority window). Other files:
+`Info.plist`, `AppIcon.icns` (made by `scripts/make-icon.swift`), `devices.example` / `outputs.example`,
+`Makefile`.
+
+| Command | What it does |
+| --- | --- |
+| `make app` | build `AudioPriority.app` next to the sources (ad‑hoc signed) |
+| `make install` | build to `~/Applications`, symlink the CLI to `~/bin`, enable start at login, (re)start |
+| `make status` / `make log` | launchd state + `--list`; last 30 log lines |
+| `make stop` / `make start` / `make uninstall` | stop until next login / start / remove everything |
+| `make icon` | regenerate `AppIcon.icns` |
+| `make release` | `dist/AudioPriority-<version>.zip` for GitHub Releases |
+
+State: rules in `~/.config/audio-input-priority/`, toggles and the list of devices seen so far in the
+`com.apetrochenko.audio-input-priority` defaults domain (`auto`, `notify`, `autoAdd`, `lidSkip`,
+`seen`, `onboarded`), the LaunchAgent in `~/Library/LaunchAgents/com.apetrochenko.audio-input-priority.plist`,
+the log in `~/Library/Logs/`.
+
+Releasing a version: bump `CFBundleShortVersionString` in `Info.plist`, commit, tag `vX.Y.Z`, push,
+`make release`, `gh release create vX.Y.Z dist/AudioPriority-X.Y.Z.zip --notes-file CHANGELOG.md`,
+then update `url` and `sha256` in `Formula/audio-priority.rb` of
+[petrochen/homebrew-tap](https://github.com/petrochen/homebrew-tap)
+(`curl -sL <tarball url> | shasum -a 256`).
+
+Why not a notarized build: it needs an Apple developer subscription. The same reason the app writes its
+own LaunchAgent instead of using the system Login Items API, which pins the binary's code hash and
+refuses to launch an ad‑hoc signed app after every rebuild.
+
 ## Contributing
 
 Issues with the output of `--list` and the last lines of the log are the most useful. The whole app is
