@@ -43,6 +43,7 @@ let defaults = UserDefaults.standard
 var autoEnabled = defaults.object(forKey: "auto") as? Bool ?? true       // menu-bar toggle, persisted
 var notifyEnabled = defaults.object(forKey: "notify") as? Bool ?? true   // menu-bar toggle, persisted
 var autoAddEnabled = defaults.object(forKey: "autoAdd") as? Bool ?? true // append new wired devices to the lists
+var lidSkipEnabled = defaults.object(forKey: "lidSkip") as? Bool ?? true // skip built-in devices while the lid is closed
 
 // MARK: - CoreAudio helpers
 let sys = AudioObjectID(kAudioObjectSystemObject)
@@ -116,6 +117,7 @@ func recorders() -> [String] {
     }
 }
 func lidClosed() -> Bool {
+    guard lidSkipEnabled else { return false }
     let svc = IOServiceGetMatchingService(kIOMainPortDefault, IOServiceMatching("IOPMrootDomain"))
     guard svc != 0 else { return false }
     defer { IOObjectRelease(svc) }
@@ -437,7 +439,8 @@ final class MenuBar: NSObject, NSMenuDelegate, UNUserNotificationCenterDelegate 
         _ = add("Add new wired devices to the lists", #selector(toggleAutoAdd), state: autoAddEnabled ? .on : .off)
         _ = add("Start at login", #selector(toggleLogin), state: loginItemEnabled() ? .on : .off)
         menu.addItem(.separator())
-        _ = add("Edit priority lists…", #selector(openConfig))
+        _ = add("Priority…", #selector(openPriority), key: ",")
+        _ = add("Open config folder", #selector(openConfig))
         _ = add("Show log", #selector(openLog))
         _ = add("Sound settings…", #selector(openSoundSettings))
         menu.addItem(.separator())
@@ -471,16 +474,133 @@ final class MenuBar: NSObject, NSMenuDelegate, UNUserNotificationCenterDelegate 
     }
     @objc func applyNow() { queue.async { manual = [:]; knownDevices = []; apply() } }
     @objc func fixStereo() { queue.async { _ = fixHFP(force: true); DispatchQueue.main.async { self.refresh() } } }
-    @objc func openConfig() {
-        ensureConfig()
-        for k in kinds { NSWorkspace.shared.open(configDir.appendingPathComponent(k.file)) }
-    }
+    @objc func openPriority() { if priorityWindow == nil { priorityWindow = PriorityWindow() }; priorityWindow?.show() }
+    @objc func openConfig() { ensureConfig(); NSWorkspace.shared.open(configDir) }
     @objc func openLog() { NSWorkspace.shared.open(URL(fileURLWithPath: logPath)) }
     @objc func openSoundSettings() { NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.Sound-Settings.extension?input")!) }
     @objc func quit() { NSApp.terminate(nil) }
     // Show banners even if the app happens to be frontmost
     func userNotificationCenter(_ c: UNUserNotificationCenter, willPresent n: UNNotification, withCompletionHandler h: @escaping (UNNotificationPresentationOptions) -> Void) { h([.banner]) }
 }
+
+// MARK: - Priority editor window
+let classHelp: [(String, String)] = [
+    ("@wired", "USB, Thunderbolt, PCI, FireWire"), ("@usb", "USB only"), ("@builtin", "built-in mic / speakers"),
+    ("@airpods", "any AirPods"), ("@bluetooth", "any Bluetooth device"), ("@display", "monitor over DisplayPort / HDMI"),
+    ("@continuity", "iPhone / iPad"), ("@airplay", "AirPlay"), ("@aggregate", "aggregate devices"), ("@virtual", "software devices (Teams, Zoom, BlackHole…)"),
+]
+final class RuleList: NSObject, NSTableViewDataSource, NSTableViewDelegate, NSMenuDelegate {
+    static let dragType = NSPasteboard.PasteboardType("com.apetrochenko.audio-input-priority.rule")
+    let kind: Kind; var rules: [String]
+    let table = NSTableView(); let scroll = NSScrollView(); let addButton = NSPopUpButton(frame: .zero, pullsDown: true)
+    let removeButton = NSButton(title: "−", target: nil, action: nil)
+    let view = NSStackView()
+    init(_ kind: Kind) {
+        self.kind = kind; rules = priority(kind.file, kind.fallback)
+        super.init()
+        let col = NSTableColumn(identifier: .init("rule")); col.resizingMask = .autoresizingMask
+        table.addTableColumn(col); table.headerView = nil; table.rowHeight = 24
+        table.dataSource = self; table.delegate = self
+        table.registerForDraggedTypes([RuleList.dragType]); table.setDraggingSourceOperationMask(.move, forLocal: true)
+        scroll.documentView = table; scroll.hasVerticalScroller = true; scroll.borderType = .bezelBorder
+        scroll.translatesAutoresizingMaskIntoConstraints = false
+        scroll.widthAnchor.constraint(greaterThanOrEqualToConstant: 280).isActive = true
+        scroll.heightAnchor.constraint(equalToConstant: 240).isActive = true
+        addButton.menu?.delegate = self; addButton.addItem(withTitle: "+")   // first item is the pull-down title
+        removeButton.target = self; removeButton.action = #selector(removeSelected)
+        let title = NSTextField(labelWithString: kind.label == "input" ? "Microphone" : "Sound output")
+        title.font = .boldSystemFont(ofSize: 13)
+        let buttons = NSStackView(views: [addButton, removeButton]); buttons.orientation = .horizontal
+        view.orientation = .vertical; view.alignment = .leading; view.spacing = 6
+        view.addArrangedSubview(title); view.addArrangedSubview(scroll); view.addArrangedSubview(buttons)
+    }
+    func numberOfRows(in tableView: NSTableView) -> Int { rules.count }
+    func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
+        let r = rules[row]
+        var text = r, dim = false
+        if r.hasPrefix("@") { text = "\(r)  ·  \(classHelp.first { $0.0 == r }?.1 ?? "class")" }
+        else {
+            let present = objects(kAudioHardwarePropertyDevices).contains { hasStreams($0, kind.scope) && matches(r, $0, name($0)) }
+            text = (present ? "●  " : "○  ") + r; dim = !present
+        }
+        let f = NSTextField(labelWithString: text); f.lineBreakMode = .byTruncatingTail
+        f.textColor = dim ? .secondaryLabelColor : .labelColor
+        let cell = NSTableCellView(); cell.addSubview(f); cell.textField = f
+        f.translatesAutoresizingMaskIntoConstraints = false
+        f.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: 4).isActive = true
+        f.trailingAnchor.constraint(equalTo: cell.trailingAnchor, constant: -4).isActive = true
+        f.centerYAnchor.constraint(equalTo: cell.centerYAnchor).isActive = true
+        return cell
+    }
+    // Drag to reorder
+    func tableView(_ tableView: NSTableView, pasteboardWriterForRow row: Int) -> NSPasteboardWriting? {
+        let item = NSPasteboardItem(); item.setString(String(row), forType: RuleList.dragType); return item
+    }
+    func tableView(_ tableView: NSTableView, validateDrop info: NSDraggingInfo, proposedRow row: Int, proposedDropOperation op: NSTableView.DropOperation) -> NSDragOperation {
+        guard info.draggingSource as? NSTableView === table else { return [] }
+        if op == .on { tableView.setDropRow(row, dropOperation: .above) }
+        return .move
+    }
+    func tableView(_ tableView: NSTableView, acceptDrop info: NSDraggingInfo, row: Int, dropOperation: NSTableView.DropOperation) -> Bool {
+        guard let str = info.draggingPasteboard.pasteboardItems?.first?.string(forType: RuleList.dragType), let from = Int(str) else { return false }
+        let rule = rules.remove(at: from)
+        rules.insert(rule, at: from < row ? row - 1 : row)
+        save(); return true
+    }
+    // "+" pull-down: connected devices, devices seen before, classes — minus what the rules already cover
+    func menuNeedsUpdate(_ menu: NSMenu) {
+        while menu.items.count > 1 { menu.removeItem(at: 1) }
+        func item(_ title: String, _ rule: String) { let mi = NSMenuItem(title: title, action: #selector(addRule(_:)), keyEquivalent: ""); mi.target = self; mi.representedObject = rule; menu.addItem(mi) }
+        let covered: (AudioObjectID?, String) -> Bool = { id, n in self.rules.contains { r in id.map { matches(r, $0, n) } ?? (r == n) } }
+        let present = objects(kAudioHardwarePropertyDevices).filter { hasStreams($0, kind.scope) }
+        let presentNames = Set(present.map(name))
+        let fresh = present.filter { !covered($0, name($0)) }
+        if !fresh.isEmpty { menu.addItem(sectionHeader("Connected now")); for d in fresh { item(name(d), name(d)) } }
+        let old = seen.filter { ($0.value[kind.label] as? Bool) == true && !presentNames.contains($0.key) && !covered(nil, $0.key) }.keys.sorted()
+        if !old.isEmpty { menu.addItem(sectionHeader("Seen before")); for n in old { item(n, n) } }
+        menu.addItem(sectionHeader("Device classes"))
+        for (c, help) in classHelp where !rules.contains(c) { item("\(c)  ·  \(help)", c) }
+    }
+    func sectionHeader(_ t: String) -> NSMenuItem { let mi = NSMenuItem(title: t, action: nil, keyEquivalent: ""); mi.isEnabled = false; return mi }
+    @objc func addRule(_ sender: NSMenuItem) {
+        guard let r = sender.representedObject as? String, !rules.contains(r) else { return }
+        rules.append(r); save(); table.selectRowIndexes([rules.count - 1], byExtendingSelection: false)
+    }
+    @objc func removeSelected() {
+        let i = table.selectedRow; guard i >= 0 else { return }
+        rules.remove(at: i); save()
+    }
+    func save() {
+        writeConfig(kind.file, rules); table.reloadData()
+        log("\(kind.label): priority list edited: \(rules.joined(separator: " > "))")
+        queue.async { manual = [:]; knownDevices = []; apply() }
+    }
+}
+final class PriorityWindow: NSObject, NSWindowDelegate {
+    let window: NSWindow; let lists = kinds.map { RuleList($0) }
+    override init() {
+        window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 640, height: 380), styleMask: [.titled, .closable], backing: .buffered, defer: false)
+        super.init()
+        window.title = "Audio Priority"; window.isReleasedWhenClosed = false; window.delegate = self
+        let columns = NSStackView(views: lists.map { $0.view }); columns.orientation = .horizontal; columns.alignment = .top; columns.spacing = 16
+        let lid = NSButton(checkboxWithTitle: "Skip the built-in mic and speakers while the lid is closed", target: self, action: #selector(toggleLid))
+        lid.state = lidSkipEnabled ? .on : .off
+        let autoAdd = NSButton(checkboxWithTitle: "Add new wired devices to the end of the lists automatically", target: self, action: #selector(toggleAutoAdd))
+        autoAdd.state = autoAddEnabled ? .on : .off
+        let hint = NSTextField(wrappingLabelWithString: "Best first; drag to reorder. ● connected, ○ not connected. Devices matching no rule are never selected automatically.")
+        hint.textColor = .secondaryLabelColor; hint.font = .systemFont(ofSize: 11)
+        let root = NSStackView(views: [columns, lid, autoAdd, hint]); root.orientation = .vertical; root.alignment = .leading; root.spacing = 10
+        root.edgeInsets = NSEdgeInsets(top: 16, left: 16, bottom: 16, right: 16)
+        window.contentView = root; window.center()
+    }
+    func show() {
+        for l in lists { l.rules = priority(l.kind.file, l.kind.fallback); l.table.reloadData() }   // pick up edits made by hand
+        NSApp.activate(ignoringOtherApps: true); window.makeKeyAndOrderFront(nil)
+    }
+    @objc func toggleLid(_ b: NSButton) { lidSkipEnabled = b.state == .on; defaults.set(lidSkipEnabled, forKey: "lidSkip"); queue.async { knownLid = nil; apply() } }
+    @objc func toggleAutoAdd(_ b: NSButton) { autoAddEnabled = b.state == .on; defaults.set(autoAddEnabled, forKey: "autoAdd") }
+}
+var priorityWindow: PriorityWindow?
 var menuBar: MenuBar?
 
 // Single instance: launchd (or a double-click) must not start a second icon.
@@ -512,4 +632,5 @@ if Bundle.main.bundleIdentifier != nil {
     }
 }
 queue.async { apply() }
+if !defaults.bool(forKey: "onboarded") { defaults.set(true, forKey: "onboarded"); menuBar?.openPriority() }
 app.run()
