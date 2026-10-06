@@ -24,22 +24,33 @@ make install
 ```
 
 `make install` builds `~/Applications/AudioPriority.app` (menu bar only, no Dock icon), symlinks the
-CLI to `~/bin/audio-input-priority`, writes the LaunchAgent to `~/Library/LaunchAgents/` and starts it.
-The agent starts at login and restarts if it ever crashes. The log is at
-`~/Library/Logs/audio-input-priority.log`.
+CLI to `~/bin/audio-input-priority`, enables **Start at login** (the app writes its own LaunchAgent to
+`~/Library/LaunchAgents/`, with restart after a crash) and starts it. The log is at `~/Library/Logs/audio-input-priority.log`.
 
 ## Menu bar
 
-The microphone icon in the menu bar opens a menu with every input and output device, a checkmark on
-the current one. Click a device to select it by hand: the agent keeps that choice (whatever the
-device) until something is plugged in / unplugged or the lid opens / closes.
+The icon shows the **type of the current microphone** (USB mic, laptop, AirPods, headphones, camera…),
+turns **yellow** when something is wrong (headphones stuck in headset mode, built‑in mic selected with the
+lid closed) and gets a small **dot** when the agent is not fully automatic (automation off, or holding a
+manual choice). Hover for a tooltip with the current mic and output.
 
+The menu:
+
+- **In use by: Zoom** — which apps are recording right now, or *Nobody is recording*.
+- Yellow warnings, when any.
+- **Microphone** / **Sound output**: every device with its icon, a checkmark on the current one, the
+  Bluetooth sample rate (16 kHz = headset mode), `lid closed` and `not in list` markers. Click a device
+  to select it by hand: the agent keeps that choice, whatever the device, until something is plugged in /
+  unplugged or the lid opens / closes.
 - A status line says what is in charge right now: automatic, holding your manual choice, or off.
-- **Back to automatic now** appears only while a manual choice is held: forget it and re-run the lists.
-- **Automatic priority** (checkbox): untick to switch the automation off entirely; the icon turns to
-  an outline. Tick it again to re-apply the lists. The setting survives restarts.
-- **Edit priority lists…** opens the two config files, **Show log** opens the log, **Sound settings…**
-  jumps to System Settings → Sound.
+  **Back to automatic now** appears only while a manual choice is held; **Fix headphones stereo now**
+  appears only while a Bluetooth headset is stuck in headset mode.
+- **Automatic priority**: untick to switch the automation off entirely. **Notify on switch**: banners on
+  every automatic switch (native notifications, shown as *Audio Priority*). **Start at login**: writes or
+  removes the LaunchAgent (`--register` / `--unregister` do the same from the terminal). All three
+  survive restarts.
+- **Edit priority lists…**, **Show log**, **Sound settings…**, **Quit** (the agent stays quit until the
+  next login; it only auto‑restarts after a crash).
 
 ## Configure priority
 
@@ -103,19 +114,16 @@ with `--quiet` (edit `ProgramArguments` in the plist).
 
 ## Turn it off / on
 
+Untick **Automatic priority** in the menu to stop the automation but keep the icon; untick **Start at
+login** so it does not come back after a reboot; **Quit** closes it until the next login. Or from the
+terminal:
+
 ```bash
 make stop      # stop the agent (stays installed, will start again at next login)
 make start     # start it again
 make restart
-make status    # running? + list of input devices
+make status    # running? + list of devices, who is recording, warnings
 make log       # last 30 lines of ~/Library/Logs/audio-input-priority.log
-```
-
-To disable it permanently but keep the files:
-
-```bash
-launchctl bootout gui/$(id -u)/com.apetrochenko.audio-input-priority
-mv ~/Library/LaunchAgents/com.apetrochenko.audio-input-priority.plist ~/Library/LaunchAgents/com.apetrochenko.audio-input-priority.plist.disabled
 ```
 
 ## Uninstall
