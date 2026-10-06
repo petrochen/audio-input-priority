@@ -225,10 +225,23 @@ final class MenuBar: NSObject, NSMenuDelegate {
             }
             menu.addItem(.separator())
         }
+        // State line + the one action that makes sense in that state
+        let held = kinds.compactMap { k -> String? in
+            guard let id = manual[k.label], id == currentDefault(k.sel) else { return nil }
+            return name(id)
+        }
+        let status: String
+        if !autoEnabled { status = "Automation is off, you choose devices yourself" }
+        else if !held.isEmpty { status = "Holding your choice (\(held.joined(separator: ", "))) until devices change" }
+        else { status = "Automatic: best listed device is selected" }
+        let st = NSMenuItem(title: status, action: nil, keyEquivalent: ""); st.isEnabled = false; menu.addItem(st)
+        if autoEnabled && !held.isEmpty {
+            let back = NSMenuItem(title: "Back to automatic now", action: #selector(applyNow), keyEquivalent: "")
+            back.target = self; back.indentationLevel = 1; menu.addItem(back)
+        }
+        menu.addItem(.separator())
         let auto = NSMenuItem(title: "Automatic priority", action: #selector(toggleAuto), keyEquivalent: "")
         auto.target = self; auto.state = autoEnabled ? .on : .off; menu.addItem(auto)
-        let apply = NSMenuItem(title: "Apply priority now", action: #selector(applyNow), keyEquivalent: "")
-        apply.target = self; menu.addItem(apply)
         menu.addItem(.separator())
         for (t, s) in [("Edit priority lists…", #selector(openConfig)), ("Show log", #selector(openLog)), ("Sound settings…", #selector(openSoundSettings))] {
             let mi = NSMenuItem(title: t, action: s, keyEquivalent: ""); mi.target = self; menu.addItem(mi)

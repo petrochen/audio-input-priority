@@ -34,9 +34,10 @@ The microphone icon in the menu bar opens a menu with every input and output dev
 the current one. Click a device to select it by hand: the agent keeps that choice (whatever the
 device) until something is plugged in / unplugged or the lid opens / closes.
 
+- A status line says what is in charge right now: automatic, holding your manual choice, or off.
+- **Back to automatic now** appears only while a manual choice is held: forget it and re-run the lists.
 - **Automatic priority** (checkbox): untick to switch the automation off entirely; the icon turns to
   an outline. Tick it again to re-apply the lists. The setting survives restarts.
-- **Apply priority now**: forget manual choices and re-run the lists.
 - **Edit priority lists…** opens the two config files, **Show log** opens the log, **Sound settings…**
   jumps to System Settings → Sound.
 
