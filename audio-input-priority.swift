@@ -186,7 +186,11 @@ func banner(_ title: String, _ text: String) {
 func loginItemEnabled() -> Bool { FileManager.default.fileExists(atPath: launchAgent.path) }
 // Writes the plist and bootstraps the job. The caller decides whether to exit afterwards.
 func enableLoginItem() throws {
-    let exe = Bundle.main.executableURL?.path ?? CommandLine.arguments[0]
+    var exe = Bundle.main.executableURL?.path ?? CommandLine.arguments[0]
+    // Homebrew: point launchd at the stable opt/ path so the agent survives `brew upgrade`.
+    if let r = exe.range(of: #"/Cellar/([^/]+)/[^/]+/"#, options: .regularExpression) {
+        let formula = exe[r].split(separator: "/")[1]; exe.replaceSubrange(r, with: "/opt/\(formula)/")
+    }
     let plist: [String: Any] = ["Label": label, "ProgramArguments": [exe], "RunAtLoad": true,
                                 "KeepAlive": ["SuccessfulExit": false], "ProcessType": "Interactive"]
     try FileManager.default.createDirectory(at: launchAgent.deletingLastPathComponent(), withIntermediateDirectories: true)
