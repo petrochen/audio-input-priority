@@ -34,13 +34,18 @@ Globs `*` and `?` are allowed (case-insensitive), handy for several AirPods with
 ```
 fifine Microphone
 MX Brio
-MacBook Pro Microphone
 *Pods*
+MacBook Pro Microphone
 ```
 
-Rationale: any USB / built‑in microphone at 48 kHz beats a Bluetooth headset, whose mic runs over
-HFP at 16 kHz mono. AirPods therefore come last — they win only on the go, when nothing else is
-plugged in and the lid is closed.
+Rationale: a USB microphone at 48 kHz beats everything else, so wired mics come first. AirPods come
+before the built-in mic: when they are in your ears you are usually on the go or in a noisy room,
+and a mic next to your mouth with noise cancellation wins over the laptop array.
+
+**Manual picks are respected.** If you choose another *listed* device by hand (System Settings → Sound,
+Control Center, or an app that changes the system default), the agent keeps it until a device is
+plugged/unplugged or the lid opens/closes; then the priority list applies again. Devices that are not
+in the list (e.g. a Sony headset after a call) are always reverted.
 
 Get exact device names (the `*` marks the current default):
 

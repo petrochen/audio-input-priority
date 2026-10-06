@@ -9,10 +9,12 @@ import IOKit
 //   ~/.config/audio-input-priority/devices   default INPUT priority
 //   ~/.config/audio-input-priority/outputs   default OUTPUT priority
 // Built-in mic and speakers are skipped while the lid is closed (clamshell mode).
+// A manual pick (System Settings, Control Center, an app) of any LISTED device is kept until the
+// set of devices or the lid state changes; devices not in the list are always reverted.
 // Bluetooth output stuck in HFP (<=16 kHz) with nobody using the mic is bumped back to A2DP.
 // Usage: audio-input-priority [--list | --once]
 
-let defaultInputPriority  = ["fifine Microphone", "MX Brio", "MacBook Pro Microphone", "*Pods*"]
+let defaultInputPriority  = ["fifine Microphone", "MX Brio", "*Pods*", "MacBook Pro Microphone"]
 let defaultOutputPriority = ["*Pods*", "WH-1000XM3", "LG UltraFine Display Audio", "MacBook Pro Speakers"]
 let configDir = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".config/audio-input-priority")
 let notify = !CommandLine.arguments.contains("--quiet")
@@ -92,12 +94,24 @@ let kinds = [
 func candidates(_ k: Kind, lidClosed closed: Bool) -> [(id: AudioObjectID, name: String)] {
     objects(kAudioHardwarePropertyDevices).filter { hasStreams($0, k.scope) && !(closed && isBuiltIn($0)) }.map { (id: $0, name: name($0)) }
 }
-func applyPriority(_ k: Kind, lidClosed closed: Bool) {
+var manual: [String: AudioObjectID] = [:]   // kind label -> device the user picked by hand
+var noPriorityLogged = Set<String>()
+func applyPriority(_ k: Kind, lidClosed closed: Bool, devicesChanged: Bool) {
     let present = candidates(k, lidClosed: closed)
-    guard let want = priority(k.file, k.fallback).lazy.compactMap({ p in present.first { matches(p, $0.name) } }).first
-    else { log("\(k.label): no priority device present"); return }
+    let prio = priority(k.file, k.fallback)
+    guard let want = prio.lazy.compactMap({ p in present.first { matches(p, $0.name) } }).first else {
+        if noPriorityLogged.insert(k.label).inserted { log("\(k.label): no priority device present") }
+        return
+    }
+    noPriorityLogged.remove(k.label)
     let cur = currentDefault(k.sel)
-    if cur == want.id { return }
+    if cur == want.id { manual[k.label] = nil; return }
+    if devicesChanged { manual[k.label] = nil }
+    // No plug/lid event, and the current default is a listed device: someone chose it on purpose. Keep it.
+    else if let chosen = present.first(where: { $0.id == cur }), prio.contains(where: { matches($0, chosen.name) }) {
+        if manual[k.label] != cur { manual[k.label] = cur; log("\(k.label): manual choice \(chosen.name) kept (listed; resets when devices change)") }
+        return
+    }
     let st = setDefault(k.sel, want.id)
     if k.label == "output" { _ = setDefault(kAudioHardwarePropertyDefaultSystemOutputDevice, want.id) }
     log("\(k.label): \(name(cur)) -> \(want.name) (status \(st), lid \(closed ? "closed" : "open"))")
@@ -119,9 +133,14 @@ func fixHFP() -> Bool {
     }
     return stuck
 }
+var knownDevices = Set<AudioObjectID>()
+var knownLid: Bool?
 func apply() {
     let closed = lidClosed()
-    for k in kinds { applyPriority(k, lidClosed: closed) }
+    let now = Set(objects(kAudioHardwarePropertyDevices))
+    let changed = now != knownDevices || closed != knownLid   // plug/unplug or lid open/close
+    knownDevices = now; knownLid = closed
+    for k in kinds { applyPriority(k, lidClosed: closed, devicesChanged: changed) }
     if fixHFP() { scheduleHFPRetry() }
 }
 
@@ -140,7 +159,7 @@ if args.contains("--list") {
     }
     exit(0)
 }
-if args.contains("--once") { let closed = lidClosed(); for k in kinds { applyPriority(k, lidClosed: closed) }; _ = fixHFP(); exit(0) }
+if args.contains("--once") { let closed = lidClosed(); for k in kinds { applyPriority(k, lidClosed: closed, devicesChanged: true) }; _ = fixHFP(); exit(0) }
 
 // MARK: - Event loop
 let queue = DispatchQueue(label: "audio-input-priority")
