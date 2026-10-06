@@ -17,15 +17,18 @@ app: build
 	cp audio-input-priority "$(EXE)"
 	cp Info.plist "$(APP)/Contents/Info.plist"
 	cp AppIcon.icns "$(APP)/Contents/Resources/AppIcon.icns"
-	codesign -f -s - "$(APP)" 2>/dev/null
+	xattr -cr "$(APP)"
+	codesign -f -s - "$(APP)"
 
 icon:   # regenerate AppIcon.icns from scripts/make-icon.swift
 	swiftc -O -o /tmp/make-icon scripts/make-icon.swift && rm -rf /tmp/AppIcon.iconset && /tmp/make-icon /tmp/AppIcon.iconset && iconutil -c icns /tmp/AppIcon.iconset -o AppIcon.icns
 
 VERSION = $(shell /usr/libexec/PlistBuddy -c 'Print CFBundleShortVersionString' Info.plist)
 release:   # zip of the app bundle for GitHub Releases (ad-hoc signed, see README about Gatekeeper)
-	$(MAKE) app APP=dist/AudioPriority.app
-	cd dist && rm -f AudioPriority-$(VERSION).zip && ditto -c -k --keepParent AudioPriority.app AudioPriority-$(VERSION).zip && shasum -a 256 AudioPriority-$(VERSION).zip
+	$(MAKE) app APP=/tmp/audio-priority-release/AudioPriority.app
+	mkdir -p dist && rm -f dist/AudioPriority-$(VERSION).zip
+	cd /tmp/audio-priority-release && ditto -c -k --keepParent AudioPriority.app "$(CURDIR)/dist/AudioPriority-$(VERSION).zip"
+	shasum -a 256 dist/AudioPriority-$(VERSION).zip
 
 # Builds the app, enables "Start at login" (the app writes its own LaunchAgent) and starts it.
 install: app
