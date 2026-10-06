@@ -1,9 +1,10 @@
-# ~/.config/audio-input-priority/devices
-# One CoreAudio input device name per line, best first. Globs * and ? allowed (case-insensitive).
-# Get exact names with: audio-input-priority --list
-# Built-in mic is skipped automatically while the lid is closed.
-# A manual pick of any listed device is kept until a device is plugged/unplugged or the lid changes.
-fifine Microphone
-MX Brio
-*Pods*
-MacBook Pro Microphone
+# Audio Priority — INPUT (microphone) priority, best first. One rule per line:
+#   a device name            MacBook Pro Microphone
+#   a glob                   *Pods*          (* and ? are case-insensitive)
+#   a device class           @wired @usb @builtin @airpods @bluetooth @display @continuity @airplay @aggregate @virtual
+# Devices matching no rule are never selected automatically. The file is re-read on every change.
+# See the exact names and classes with:  audio-input-priority --list
+
+@wired
+@airpods
+@builtin

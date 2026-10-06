@@ -8,9 +8,13 @@ import UserNotifications
 // audio-input-priority — keep macOS default input/output devices on the best available ones,
 // with a menu-bar icon to pick devices by hand and to pause the automation.
 //
-// Config (one device name or glob per line, best first; * and ? are case-insensitive):
+// Config (one rule per line, best first). A rule is a device name, a glob (* and ?, case-insensitive)
+// or a device class: @wired (USB/Thunderbolt/PCI/FireWire), @usb, @builtin, @airpods, @bluetooth,
+// @display (DisplayPort/HDMI), @continuity (iPhone/iPad), @airplay, @aggregate, @virtual.
 //   ~/.config/audio-input-priority/devices   default INPUT priority
 //   ~/.config/audio-input-priority/outputs   default OUTPUT priority
+// Both files are created with the defaults below on first run. New wired devices are appended
+// automatically (toggle in the menu); new Bluetooth devices only get a notification.
 // Built-in mic and speakers are skipped while the lid is closed (clamshell mode).
 // A manual pick (menu bar, System Settings, Control Center, an app) of a LISTED device is kept until
 // the set of devices or the lid state changes; a pick from the menu bar is kept whatever the device.
@@ -18,8 +22,17 @@ import UserNotifications
 // Usage: audio-input-priority [--list | --once | --register | --unregister | --quiet]
 // --register / --unregister: enable / disable start at login (also in the menu).
 
-let defaultInputPriority  = ["fifine Microphone", "MX Brio", "*Pods*", "MacBook Pro Microphone"]
-let defaultOutputPriority = ["*Pods*", "WH-1000XM3", "LG UltraFine Display Audio", "MacBook Pro Speakers"]
+let defaultInputPriority  = ["@wired", "@airpods", "@builtin"]
+let defaultOutputPriority = ["@airpods", "@bluetooth", "@wired", "@display", "@builtin"]
+let configHeader = """
+# Audio Priority — %@ priority, best first. One rule per line:
+#   a device name            MacBook Pro Microphone
+#   a glob                   *Pods*          (* and ? are case-insensitive)
+#   a device class           @wired @usb @builtin @airpods @bluetooth @display @continuity @airplay @aggregate @virtual
+# Devices matching no rule are never selected automatically. The file is re-read on every change.
+# See the exact names and classes with:  audio-input-priority --list
+
+"""
 let home = FileManager.default.homeDirectoryForCurrentUser
 let configDir = home.appendingPathComponent(".config/audio-input-priority")
 let logPath = home.appendingPathComponent("Library/Logs/audio-input-priority.log").path
@@ -29,6 +42,7 @@ let quiet = CommandLine.arguments.contains("--quiet")
 let defaults = UserDefaults.standard
 var autoEnabled = defaults.object(forKey: "auto") as? Bool ?? true       // menu-bar toggle, persisted
 var notifyEnabled = defaults.object(forKey: "notify") as? Bool ?? true   // menu-bar toggle, persisted
+var autoAddEnabled = defaults.object(forKey: "autoAdd") as? Bool ?? true // append new wired devices to the lists
 
 // MARK: - CoreAudio helpers
 let sys = AudioObjectID(kAudioObjectSystemObject)
@@ -74,6 +88,23 @@ func maxSampleRate(_ id: AudioObjectID) -> Double {
     AudioObjectGetPropertyData(id, &a, 0, nil, &sz, &ranges)
     return ranges.map { $0.mMaximum }.max() ?? 0
 }
+func classes(_ id: AudioObjectID) -> Set<String> {
+    var c = Set<String>(); let n = name(id).lowercased()
+    switch transport(id) {
+    case kAudioDeviceTransportTypeBuiltIn: c.insert("builtin")
+    case kAudioDeviceTransportTypeUSB: c.formUnion(["usb", "wired"])
+    case kAudioDeviceTransportTypePCI, kAudioDeviceTransportTypeFireWire, kAudioDeviceTransportTypeThunderbolt: c.insert("wired")
+    case kAudioDeviceTransportTypeBluetooth, kAudioDeviceTransportTypeBluetoothLE:
+        c.insert("bluetooth"); if n.contains("pods") { c.insert("airpods") }
+    case kAudioDeviceTransportTypeDisplayPort, kAudioDeviceTransportTypeHDMI: c.insert("display")
+    case kAudioDeviceTransportTypeAirPlay: c.insert("airplay")
+    case kAudioDeviceTransportTypeAggregate: c.insert("aggregate")
+    case kAudioDeviceTransportTypeVirtual: c.insert("virtual")
+    default: break
+    }
+    if n.contains("iphone") || n.contains("ipad") { c.insert("continuity") }
+    return c
+}
 func isHFP(_ id: AudioObjectID) -> Bool { let r = sampleRate(id); return isBluetooth(id) && r > 0 && r <= 16000 }
 // Apps currently recording from the default input (CoreAudio process objects, macOS 14+).
 func recorders() -> [String] {
@@ -91,13 +122,33 @@ func lidClosed() -> Bool {
     let v = IORegistryEntryCreateCFProperty(svc, "AppleClamshellState" as CFString, kCFAllocatorDefault, 0)?.takeRetainedValue()
     return (v as? Bool) ?? false
 }
-func matches(_ pattern: String, _ text: String) -> Bool { NSPredicate(format: "SELF LIKE[c] %@", pattern).evaluate(with: text) }
+func matches(_ rule: String, _ id: AudioObjectID, _ deviceName: String) -> Bool {
+    if rule.hasPrefix("@") { return classes(id).contains(rule.dropFirst().lowercased()) }
+    return NSPredicate(format: "SELF LIKE[c] %@", rule).evaluate(with: deviceName)
+}
 func priority(_ file: String, _ fallback: [String]) -> [String] {
     guard let text = try? String(contentsOf: configDir.appendingPathComponent(file), encoding: .utf8) else { return fallback }
     let lines = text.split(separator: "\n").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty && !$0.hasPrefix("#") }
     return lines.isEmpty ? fallback : lines
 }
-func isListed(_ deviceName: String, _ prio: [String]) -> Bool { prio.contains { matches($0, deviceName) } }
+func isListed(_ id: AudioObjectID, _ deviceName: String, _ prio: [String]) -> Bool { prio.contains { matches($0, id, deviceName) } }
+func writeConfig(_ file: String, _ lines: [String]) {
+    try? FileManager.default.createDirectory(at: configDir, withIntermediateDirectories: true)
+    let header = String(format: configHeader, file == "devices" ? "INPUT (microphone)" : "OUTPUT")
+    try? (header + lines.joined(separator: "\n") + "\n").write(to: configDir.appendingPathComponent(file), atomically: true, encoding: .utf8)
+}
+func ensureConfig() {   // first run: materialise the defaults so users have something to edit
+    for k in kinds where !FileManager.default.fileExists(atPath: configDir.appendingPathComponent(k.file).path) { writeConfig(k.file, k.fallback) }
+}
+// Devices seen so far (name -> info), for the priority editor and for "new device" handling.
+var seen: [String: [String: Any]] = defaults.dictionary(forKey: "seen") as? [String: [String: Any]] ?? [:]
+func remember(_ id: AudioObjectID, _ deviceName: String) -> Bool {   // returns true if new
+    let isNew = seen[deviceName] == nil
+    seen[deviceName] = ["classes": Array(classes(id)).sorted(), "input": hasStreams(id, kAudioObjectPropertyScopeInput),
+                        "output": hasStreams(id, kAudioObjectPropertyScopeOutput), "last": Date()]
+    defaults.set(seen, forKey: "seen")
+    return isNew
+}
 
 // MARK: - Logging & notifications
 let logFile: FileHandle? = {
@@ -158,7 +209,7 @@ var noPriorityLogged = Set<String>()
 func applyPriority(_ k: Kind, lidClosed closed: Bool, devicesChanged: Bool) {
     let present = candidates(k, lidClosed: closed)
     let prio = priority(k.file, k.fallback)
-    guard let want = prio.lazy.compactMap({ p in present.first { matches(p, $0.name) } }).first else {
+    guard let want = prio.lazy.compactMap({ p in present.first { matches(p, $0.id, $0.name) } }).first else {
         if noPriorityLogged.insert(k.label).inserted { log("\(k.label): no priority device present") }
         return
     }
@@ -168,7 +219,7 @@ func applyPriority(_ k: Kind, lidClosed closed: Bool, devicesChanged: Bool) {
     if devicesChanged { manual[k.label] = nil }
     else if manual[k.label] == cur { return }   // picked from the menu bar: keep whatever it is
     // No plug/lid event, and the current default is a listed device: someone chose it on purpose. Keep it.
-    else if let chosen = present.first(where: { $0.id == cur }), isListed(chosen.name, prio) {
+    else if let chosen = present.first(where: { $0.id == cur }), isListed(chosen.id, chosen.name, prio) {
         manual[k.label] = cur; log("\(k.label): manual choice \(chosen.name) kept (listed; resets when devices change)")
         return
     }
@@ -177,12 +228,20 @@ func applyPriority(_ k: Kind, lidClosed closed: Bool, devicesChanged: Bool) {
     log("\(k.label): \(name(cur)) -> \(want.name) (status \(st), lid \(closed ? "closed" : "open"))")
     banner(k.label == "input" ? "Microphone" : "Sound output", want.name)
 }
+// Someone is recording: a process object says so (macOS 14+), or the headset's input device is running (any macOS).
+func callInProgress(_ output: AudioObjectID) -> Bool {
+    if !recorders().isEmpty { return true }
+    let n = name(output)
+    return objects(kAudioHardwarePropertyDevices).contains {
+        hasStreams($0, kAudioObjectPropertyScopeInput) && name($0) == n && u32($0, kAudioDevicePropertyDeviceIsRunningSomewhere) == 1
+    }
+}
 // Bluetooth headset stuck in HFP: output at <=16 kHz while nobody records. Returns true if still stuck.
 func fixHFP(force: Bool = false) -> Bool {
     var stuck = false
     for d in objects(kAudioHardwarePropertyDevices) where isHFP(d) && hasStreams(d, kAudioObjectPropertyScopeOutput) {
         let rate = sampleRate(d)
-        if !force && !recorders().isEmpty { stuck = true; continue }   // a call is in progress, leave it
+        if !force && callInProgress(d) { stuck = true; continue }   // a call is in progress, leave it
         let target = maxSampleRate(d)
         guard target > rate else { stuck = true; continue }
         var a = addr(kAudioDevicePropertyNominalSampleRate); var r = target
@@ -198,10 +257,30 @@ func apply() {
     let closed = lidClosed()
     let now = Set(objects(kAudioHardwarePropertyDevices))
     let changed = now != knownDevices || closed != knownLid   // plug/unplug or lid open/close
+    let appeared = now.subtracting(knownDevices)
     knownDevices = now; knownLid = closed
+    for d in appeared { newDevice(d) }
     if autoEnabled { for k in kinds { applyPriority(k, lidClosed: closed, devicesChanged: changed) } }
     if fixHFP() { scheduleHFPRetry() }
     DispatchQueue.main.async { menuBar?.refresh() }
+}
+// A device we have never seen: wired ones join the end of the lists, Bluetooth ones get a notification.
+func newDevice(_ d: AudioObjectID) {
+    let n = name(d)
+    guard remember(d, n) else { return }
+    let cls = classes(d)
+    for k in kinds where hasStreams(d, k.scope) {
+        let prio = priority(k.file, k.fallback)
+        if isListed(d, n, prio) { continue }
+        if cls.contains("wired") && autoAddEnabled {
+            writeConfig(k.file, prio + [n])
+            log("\(k.label): new wired device \(n) added to the end of the priority list")
+            banner("New device", "\(n) added to the end of the \(k.label) priority list")
+        } else if cls.contains("bluetooth") {
+            log("\(k.label): new Bluetooth device \(n) is not in the priority list")
+            banner("New Bluetooth device", "\(n) is not in the \(k.label) priority list. Add it in Priority… if you want it selected automatically.")
+        }
+    }
 }
 // Things worth a yellow icon.
 func warnings() -> [String] {
@@ -224,8 +303,9 @@ if args.contains("--list") {
             let n = name(d)
             let skip = closed && isBuiltIn(d) ? "  (skipped: lid closed)" : ""
             let bt = isBluetooth(d) ? "  [\(Int(sampleRate(d))) Hz]" : ""
-            let listed = isListed(n, prio) ? "" : "  (not in list)"
-            print("  \(d == cur ? "* " : "  ")\(n)\(bt)\(skip)\(listed)")
+            let listed = isListed(d, n, prio) ? "" : "  (not in list)"
+            let cls = classes(d).sorted().map { "@" + $0 }.joined(separator: " ")
+            print("  \(d == cur ? "* " : "  ")\(n)\(bt)\(skip)\(listed)  \(cls)")
         }
     }
     let r = recorders(); print("recording: \(r.isEmpty ? "nobody" : r.joined(separator: ", "))")
@@ -335,7 +415,7 @@ final class MenuBar: NSObject, NSMenuDelegate, UNUserNotificationCenterDelegate 
                 let n = name(d); var title = n
                 if isBluetooth(d) { title += "  \(Int(sampleRate(d)) / 1000) kHz" }
                 if closed && isBuiltIn(d) { title += "  · lid closed" }
-                if !isListed(n, prio) { title += "  · not in list" }
+                if !isListed(d, n, prio) { title += "  · not in list" }
                 let mi = add(title, #selector(pick(_:)), indent: 1, state: d == cur ? .on : .off, image: symbol(symbolName(d, k.scope)))
                 mi.representedObject = [i, Int(d)]
             }
@@ -354,6 +434,7 @@ final class MenuBar: NSObject, NSMenuDelegate, UNUserNotificationCenterDelegate 
         menu.addItem(.separator())
         _ = add("Automatic priority", #selector(toggleAuto), state: autoEnabled ? .on : .off)
         _ = add("Notify on switch", #selector(toggleNotify), state: notifyEnabled ? .on : .off)
+        _ = add("Add new wired devices to the lists", #selector(toggleAutoAdd), state: autoAddEnabled ? .on : .off)
         _ = add("Start at login", #selector(toggleLogin), state: loginItemEnabled() ? .on : .off)
         menu.addItem(.separator())
         _ = add("Edit priority lists…", #selector(openConfig))
@@ -380,6 +461,7 @@ final class MenuBar: NSObject, NSMenuDelegate, UNUserNotificationCenterDelegate 
         if autoEnabled { queue.async { manual = [:]; apply() } }
     }
     @objc func toggleNotify() { notifyEnabled.toggle(); defaults.set(notifyEnabled, forKey: "notify") }
+    @objc func toggleAutoAdd() { autoAddEnabled.toggle(); defaults.set(autoAddEnabled, forKey: "autoAdd") }
     @objc func toggleLogin() {
         if loginItemEnabled() { disableLoginItem(); log("login item: disabled"); return }
         do {
@@ -390,14 +472,8 @@ final class MenuBar: NSObject, NSMenuDelegate, UNUserNotificationCenterDelegate 
     @objc func applyNow() { queue.async { manual = [:]; knownDevices = []; apply() } }
     @objc func fixStereo() { queue.async { _ = fixHFP(force: true); DispatchQueue.main.async { self.refresh() } } }
     @objc func openConfig() {
-        for (f, example) in [("devices", defaultInputPriority), ("outputs", defaultOutputPriority)] {
-            let url = configDir.appendingPathComponent(f)
-            if !FileManager.default.fileExists(atPath: url.path) {
-                try? FileManager.default.createDirectory(at: configDir, withIntermediateDirectories: true)
-                try? (example.joined(separator: "\n") + "\n").write(to: url, atomically: true, encoding: .utf8)
-            }
-            NSWorkspace.shared.open(url)
-        }
+        ensureConfig()
+        for k in kinds { NSWorkspace.shared.open(configDir.appendingPathComponent(k.file)) }
     }
     @objc func openLog() { NSWorkspace.shared.open(URL(fileURLWithPath: logPath)) }
     @objc func openSoundSettings() { NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.Sound-Settings.extension?input")!) }
@@ -420,6 +496,9 @@ AudioObjectAddPropertyListenerBlock(sys, &a2, queue, listener)
 AudioObjectAddPropertyListenerBlock(sys, &a3, queue, listener)
 CGDisplayRegisterReconfigurationCallback({ _, _, _ in queue.async { schedule() } }, nil)   // lid open/close
 watchBluetoothRates()
+ensureConfig()
+if seen.isEmpty { for d in objects(kAudioHardwarePropertyDevices) { _ = remember(d, name(d)) } }   // first run: current devices are not "new"
+knownDevices = Set(objects(kAudioHardwarePropertyDevices))
 log("started; auto \(autoEnabled ? "on" : "off"); input: \(priority("devices", defaultInputPriority).joined(separator: " > ")); output: \(priority("outputs", defaultOutputPriority).joined(separator: " > "))")
 
 let app = NSApplication.shared
